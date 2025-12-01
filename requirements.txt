@@ -1,0 +1,6 @@
+google-search-results
+python-dotenv
+streamlit
+pandas
+geopy
+
