@@ -7,6 +7,7 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 import math
+import time
 
 # ページ設定
 st.set_page_config(
@@ -116,9 +117,97 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     """2点間の距離をメートルで返す"""
     return geodesic((lat1, lon1), (lat2, lon2)).meters
 
+# CSVインポート機能用の関数
+def search_store_by_name(store_name, location_str=None, api_key=None):
+    """
+    屋号（店名）から店舗情報を取得する関数
+    
+    Args:
+        store_name: 検索する店舗名（屋号）
+        location_str: 検索場所（例: "@35.6762,139.6503,14z" または None）
+        api_key: SerpAPIキー
+    
+    Returns:
+        dict: 店舗情報（店舗名、電話番号、住所、緯度、経度など）
+    """
+    if not api_key:
+        return {'success': False, 'error': 'APIキーが設定されていません'}
+    
+    try:
+        # 検索クエリを構築（屋号 + 地名の場合は地名も含める）
+        query = store_name
+        
+        # SerpAPIのパラメータを設定
+        params = {
+            "engine": "google_maps",
+            "q": query,
+            "api_key": api_key
+        }
+        
+        # 場所が指定されている場合は追加
+        if location_str:
+            params["ll"] = location_str
+        
+        # APIリクエストを実行
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        
+        # 結果を解析
+        if results and 'local_results' in results:
+            local_results = results.get('local_results', [])
+            if local_results:
+                # 最初の結果（最も関連性の高い店舗）を取得
+                place = local_results[0]
+                
+                # 店舗情報を抽出
+                title = place.get('title', '')
+                phone = place.get('phone') or place.get('電話', '')
+                address = place.get('address') or place.get('住所', '')
+                
+                # 座標を取得
+                gps = place.get('gps_coordinates', {})
+                latitude = gps.get('latitude') if gps else None
+                longitude = gps.get('longitude') if gps else None
+                
+                return {
+                    'success': True,
+                    '店舗名': title,
+                    '電話番号': phone,
+                    '住所': address,
+                    '緯度': latitude,
+                    '経度': longitude,
+                    '評価': place.get('rating', ''),
+                    'レビュー数': place.get('reviews', '')
+                }
+        
+        # 結果が見つからない場合
+        return {
+            'success': False,
+            'error': '店舗が見つかりませんでした',
+            '店舗名': '',
+            '電話番号': '',
+            '住所': '',
+            '緯度': None,
+            '経度': None
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f'エラー: {str(e)}',
+            '店舗名': '',
+            '電話番号': '',
+            '住所': '',
+            '緯度': None,
+            '経度': None
+        }
+
 # タイトルと説明
 st.title("📞 店舗電話番号抽出アプリ")
 st.markdown("SerpAPIを使用してGoogle Mapsから店舗を検索し、電話番号をリスト化します。")
+
+# タブで機能を分ける
+tab_normal, tab_csv = st.tabs(["🔍 通常検索", "📄 CSVから電話番号取得"])
 
 # サイドバーに設定
 with st.sidebar:
@@ -140,50 +229,52 @@ with st.sidebar:
     3. 検索ボタンをクリック
     """)
 
-# 座標のプリセット
-if 'lat' not in st.session_state:
-    st.session_state.lat = 40.7455096
-if 'lon' not in st.session_state:
-    st.session_state.lon = -74.0083012
-if 'zoom' not in st.session_state:
-    st.session_state.zoom = 14
-
-# よく使われる場所のプリセット
-st.markdown("### 📍 よく使われる場所のプリセット")
-preset_col1, preset_col2, preset_col3, preset_col4 = st.columns(4)
-
-with preset_col1:
-    if st.button("🗽 ニューヨーク", use_container_width=True):
+# 通常検索タブ
+with tab_normal:
+    # 座標のプリセット
+    if 'lat' not in st.session_state:
         st.session_state.lat = 40.7455096
+    if 'lon' not in st.session_state:
         st.session_state.lon = -74.0083012
+    if 'zoom' not in st.session_state:
         st.session_state.zoom = 14
-        st.rerun()
 
-with preset_col2:
-    if st.button("🗼 東京", use_container_width=True):
-        st.session_state.lat = 35.6762
-        st.session_state.lon = 139.6503
-        st.session_state.zoom = 14
-        st.rerun()
+    # よく使われる場所のプリセット
+    st.markdown("### 📍 よく使われる場所のプリセット")
+    preset_col1, preset_col2, preset_col3, preset_col4 = st.columns(4)
 
-with preset_col3:
-    if st.button("🌉 サンフランシスコ", use_container_width=True):
-        st.session_state.lat = 37.7749
-        st.session_state.lon = -122.4194
-        st.session_state.zoom = 14
-        st.rerun()
+    with preset_col1:
+        if st.button("🗽 ニューヨーク", use_container_width=True):
+            st.session_state.lat = 40.7455096
+            st.session_state.lon = -74.0083012
+            st.session_state.zoom = 14
+            st.rerun()
 
-with preset_col4:
-    if st.button("🏙️ ロサンゼルス", use_container_width=True):
-        st.session_state.lat = 34.0522
-        st.session_state.lon = -118.2437
-        st.session_state.zoom = 14
-        st.rerun()
+    with preset_col2:
+        if st.button("🗼 東京", use_container_width=True):
+            st.session_state.lat = 35.6762
+            st.session_state.lon = 139.6503
+            st.session_state.zoom = 14
+            st.rerun()
 
-st.markdown("---")
+    with preset_col3:
+        if st.button("🌉 サンフランシスコ", use_container_width=True):
+            st.session_state.lat = 37.7749
+            st.session_state.lon = -122.4194
+            st.session_state.zoom = 14
+            st.rerun()
 
-# 地名から座標を取得するセクション（フォーム外）
-st.markdown("### 📍 場所の設定")
+    with preset_col4:
+        if st.button("🏙️ ロサンゼルス", use_container_width=True):
+            st.session_state.lat = 34.0522
+            st.session_state.lon = -118.2437
+            st.session_state.zoom = 14
+            st.rerun()
+
+    st.markdown("---")
+
+    # 地名から座標を取得するセクション（フォーム外）
+    st.markdown("### 📍 場所の設定")
 location_input_method = st.radio(
     "場所の指定方法 *",
     ["地名から検索（推奨）", "座標を個別入力", "座標を一括入力"],
@@ -235,11 +326,11 @@ if location_input_method == "地名から検索（推奨）":
         st.caption(f"📍 現在の場所: {st.session_state.found_address}")
         st.caption(f"緯度: {st.session_state.lat:.7f}, 経度: {st.session_state.lon:.7f}")
 
-st.markdown("---")
+    st.markdown("---")
 
-# 検索フォーム
-with st.form("search_form"):
-    st.subheader("🔍 検索条件")
+    # 検索フォーム
+    with st.form("search_form"):
+        st.subheader("🔍 検索条件")
     
     # 検索キーワード
     search_query = st.text_input(
@@ -446,22 +537,22 @@ with st.form("search_form"):
             key="expand_search_checkbox"
         )
         st.session_state.expand_search = expand_search
-    
-    st.markdown("---")
-    search_button = st.form_submit_button("🔍 検索開始", use_container_width=True, type="primary")
+        
+        st.markdown("---")
+        search_button = st.form_submit_button("🔍 検索開始", use_container_width=True, type="primary")
 
-# 検索実行
-if search_button:
-    filter_takeout_only = st.session_state.get('filter_takeout', False)
-    expand_search = st.session_state.get('expand_search', False)
-    use_radius = st.session_state.get('use_radius', False)
-    radius_meters = st.session_state.get('radius_meters', None)
-    
-    if not search_query:
-        st.warning("⚠️ 検索キーワードを入力してください。")
-    elif location_input_method == "地名から検索（推奨）" and 'found_address' not in st.session_state:
-        st.warning("⚠️ 地名から座標を取得してください。")
-    else:
+    # 検索実行
+    if search_button:
+        filter_takeout_only = st.session_state.get('filter_takeout', False)
+        expand_search = st.session_state.get('expand_search', False)
+        use_radius = st.session_state.get('use_radius', False)
+        radius_meters = st.session_state.get('radius_meters', None)
+        
+        if not search_query:
+            st.warning("⚠️ 検索キーワードを入力してください。")
+        elif location_input_method == "地名から検索（推奨）" and 'found_address' not in st.session_state:
+            st.warning("⚠️ 地名から座標を取得してください。")
+        else:
         # 取得件数の設定
         max_results = 100
         
@@ -721,6 +812,236 @@ if search_button:
             except Exception as e:
                 st.error(f"❌ エラーが発生しました: {str(e)}")
                 st.exception(e)
+
+# CSVインポートタブ
+with tab_csv:
+    st.markdown("### 📄 CSVから電話番号取得")
+    st.markdown("CSVまたはExcelファイルに含まれる屋号（店名）から、Google Mapsで電話番号を取得します。")
+    
+    # ファイルアップロード
+    uploaded_file = st.file_uploader(
+        "CSVまたはExcelファイルをアップロード",
+        type=['csv', 'xlsx', 'xls'],
+        help="屋号（店名）が含まれるCSVまたはExcelファイルをアップロードしてください"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # ファイルを読み込む
+            if uploaded_file.name.endswith('.csv'):
+                df_uploaded = pd.read_csv(uploaded_file)
+            else:
+                df_uploaded = pd.read_excel(uploaded_file)
+            
+            st.success(f"✅ ファイルを読み込みました（{len(df_uploaded)}行）")
+            
+            # データプレビュー
+            st.markdown("#### 📋 データプレビュー")
+            st.dataframe(df_uploaded.head(10), use_container_width=True)
+            
+            # 列の選択
+            st.markdown("#### 🔍 列の選択")
+            columns = df_uploaded.columns.tolist()
+            
+            # 屋号列の自動検出（店名、屋号、名前、name、titleなど）
+            auto_detected_col = None
+            for col in columns:
+                col_lower = col.lower()
+                if any(keyword in col_lower for keyword in ['店名', '屋号', '名前', 'name', 'title', '店舗名', '名称']):
+                    auto_detected_col = col
+                    break
+            
+            # 屋号列の選択
+            store_name_col = st.selectbox(
+                "屋号（店名）の列を選択 *",
+                columns,
+                index=columns.index(auto_detected_col) if auto_detected_col else 0,
+                help="屋号（店名）が含まれる列を選択してください"
+            )
+            
+            # 共通検索条件
+            st.markdown("#### 📍 共通検索条件（任意）")
+            
+            col_cond1, col_cond2 = st.columns(2)
+            
+            with col_cond1:
+                location_name = st.text_input(
+                    "地名（任意）",
+                    placeholder="例: 東京都渋谷区",
+                    help="地名を指定すると、その地域で検索します"
+                )
+            
+            with col_cond2:
+                use_radius_csv = st.checkbox("検索半径を指定", help="指定した半径内の店舗のみを取得します")
+                radius_meters_csv = None
+                if use_radius_csv:
+                    radius_meters_csv = st.number_input(
+                        "検索半径（メートル）",
+                        min_value=100,
+                        max_value=50000,
+                        value=1000,
+                        step=100
+                    )
+            
+            # 座標入力（地名が指定されていない場合）
+            center_lat_csv = None
+            center_lon_csv = None
+            
+            if use_radius_csv and not location_name:
+                st.markdown("##### 中心座標の指定（半径指定時は必須）")
+                col_coord1, col_coord2 = st.columns(2)
+                with col_coord1:
+                    center_lat_csv = st.number_input(
+                        "緯度",
+                        value=35.6762,
+                        format="%.7f"
+                    )
+                with col_coord2:
+                    center_lon_csv = st.number_input(
+                        "経度",
+                        value=139.6503,
+                        format="%.7f"
+                    )
+            
+            # 実行ボタン
+            if st.button("🔍 電話番号を取得", type="primary", use_container_width=True):
+                if store_name_col not in df_uploaded.columns:
+                    st.error("❌ 選択した列が存在しません")
+                else:
+                    # 屋号リストを取得（空でないもののみ）
+                    store_names = df_uploaded[store_name_col].dropna().astype(str).tolist()
+                    
+                    if not store_names:
+                        st.warning("⚠️ 屋号が含まれていません")
+                    else:
+                        # 検索場所を設定
+                        location_str_csv = None
+                        if location_name:
+                            # 地名から座標を取得
+                            with st.spinner(f"「{location_name}」の座標を取得しています..."):
+                                result = get_coordinates_from_address(location_name)
+                                if result['success']:
+                                    center_lat_csv = result['latitude']
+                                    center_lon_csv = result['longitude']
+                                    zoom_csv = radius_to_zoom_level(radius_meters_csv) if radius_meters_csv else 14
+                                    location_str_csv = f"@{center_lat_csv},{center_lon_csv},{zoom_csv}z"
+                                    st.success(f"✅ 座標を取得しました: {result['address']}")
+                                else:
+                                    st.warning(f"⚠️ 座標を取得できませんでした: {result.get('error', '')}")
+                                    # 地名が取得できなくても検索は続行（地名なしで検索）
+                        elif use_radius_csv and center_lat_csv and center_lon_csv:
+                            # 座標が指定されている場合
+                            zoom_csv = radius_to_zoom_level(radius_meters_csv) if radius_meters_csv else 14
+                            location_str_csv = f"@{center_lat_csv},{center_lon_csv},{zoom_csv}z"
+                        
+                        # 各屋号を検索
+                        results_list = []
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        for idx, store_name in enumerate(store_names):
+                            status_text.text(f"検索中: {idx + 1}/{len(store_names)} - {store_name}")
+                            progress_bar.progress((idx + 1) / len(store_names))
+                            
+                            # 検索クエリを構築（地名がある場合は含める）
+                            query = store_name
+                            if location_name:
+                                query = f"{store_name} {location_name}"
+                            
+                            # 検索を実行
+                            result = search_store_by_name(query, location_str_csv, api_key)
+                            
+                            # 結果を保存
+                            row_result = {
+                                '屋号（入力値）': store_name,
+                                '取得店舗名': result.get('店舗名', ''),
+                                '電話番号': result.get('電話番号', ''),
+                                '住所': result.get('住所', ''),
+                                '緯度': result.get('緯度', ''),
+                                '経度': result.get('経度', ''),
+                                '評価': result.get('評価', ''),
+                                'レビュー数': result.get('レビュー数', ''),
+                                'エラー': result.get('error', '') if not result.get('success', False) else ''
+                            }
+                            
+                            # 半径フィルタ（座標が取得できた場合のみ）
+                            if use_radius_csv and radius_meters_csv and center_lat_csv and center_lon_csv:
+                                lat = result.get('緯度')
+                                lon = result.get('経度')
+                                if lat and lon:
+                                    distance = calculate_distance(center_lat_csv, center_lon_csv, lat, lon)
+                                    row_result['距離（m）'] = f"{distance:.0f}"
+                                    # 半径を超えている場合はスキップ
+                                    if distance > radius_meters_csv:
+                                        row_result['取得店舗名'] = ''
+                                        row_result['電話番号'] = ''
+                                        row_result['住所'] = ''
+                                        row_result['エラー'] = f'半径{radius_meters_csv}mを超えています'
+                                else:
+                                    row_result['距離（m）'] = ''
+                            else:
+                                row_result['距離（m）'] = ''
+                            
+                            results_list.append(row_result)
+                            
+                            # APIレート制限を考慮して少し待機
+                            time.sleep(0.5)
+                        
+                        progress_bar.progress(1.0)
+                        status_text.empty()
+                        
+                        # 結果を表示
+                        if results_list:
+                            df_results = pd.DataFrame(results_list)
+                            
+                            st.success(f"✅ {len(results_list)}件の検索が完了しました！")
+                            
+                            # タブで表示形式を切り替え
+                            tab_result1, tab_result2, tab_result3 = st.tabs(["📊 テーブル表示", "📋 リスト表示", "📥 CSVダウンロード"])
+                            
+                            with tab_result1:
+                                st.dataframe(
+                                    df_results,
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+                            
+                            with tab_result2:
+                                for index, row in enumerate(results_list, 1):
+                                    with st.container():
+                                        st.markdown(f"### {index}. {row['屋号（入力値）']}")
+                                        if row['取得店舗名']:
+                                            st.markdown(f"**取得店舗名:** {row['取得店舗名']}")
+                                        if row['電話番号']:
+                                            st.markdown(f"📞 **電話番号:** {row['電話番号']}")
+                                        if row['住所']:
+                                            st.markdown(f"📍 **住所:** {row['住所']}")
+                                        if row.get('距離（m）'):
+                                            st.markdown(f"📏 **距離:** {row['距離（m）']}m")
+                                        if row['エラー']:
+                                            st.warning(f"⚠️ {row['エラー']}")
+                                        st.divider()
+                            
+                            with tab_result3:
+                                st.markdown("### CSVファイルをダウンロード")
+                                csv_output = df_results.to_csv(index=False, encoding='utf-8-sig')
+                                st.download_button(
+                                    label="📥 CSVファイルをダウンロード",
+                                    data=csv_output,
+                                    file_name=f"phone_numbers_from_csv_{len(results_list)}件.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                                
+                                # CSVのプレビュー
+                                st.markdown("#### プレビュー")
+                                st.dataframe(df_results, use_container_width=True, hide_index=True)
+        
+        except Exception as e:
+            st.error(f"❌ エラーが発生しました: {str(e)}")
+            st.exception(e)
+    else:
+        st.info("ℹ️ CSVまたはExcelファイルをアップロードしてください")
 
 # フッター
 st.markdown("---")

@@ -3,4 +3,5 @@ python-dotenv
 streamlit
 pandas
 geopy
+openpyxl
 
