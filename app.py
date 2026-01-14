@@ -8,6 +8,7 @@ from geopy.distance import geodesic
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 import math
 import time
+import re
 
 # ページ設定
 st.set_page_config(
@@ -118,24 +119,122 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return geodesic((lat1, lon1), (lat2, lon2)).meters
 
 # CSVインポート機能用の関数
-def search_store_by_name(store_name, location_str=None, api_key=None):
+
+def score_place(place):
     """
-    屋号（店名）から店舗情報を取得する関数
+    店舗情報のスコアリング関数
+    
+    Args:
+        place: Google Mapsのlocal_resultsの1件
+    
+    Returns:
+        int: スコア（高いほど信頼性が高い）
+    """
+    score = 0
+    # 電話番号がある → +50
+    if place.get('phone') or place.get('formatted_phone_number'):
+        score += 50
+    # 住所がある → +20
+    if place.get('address'):
+        score += 20
+    # 評価がある → +10
+    if place.get('rating'):
+        score += 10
+    # レビュー数がある → +10
+    if place.get('reviews'):
+        score += 10
+    # 店名に「支店」「本店」「店」が含まれる場合 → -5
+    title = place.get('title', '')
+    if any(x in title for x in ['支店', '本店', '店']):
+        score -= 5
+    return score
+
+def calculate_confidence(result):
+    """
+    取得結果の信頼度を計算する関数
+    
+    Args:
+        result: 店舗情報の辞書
+    
+    Returns:
+        str: 信頼度（Very High / High / Mid / Low）
+    """
+    has_phone = bool(result.get('電話番号'))
+    has_address = bool(result.get('住所'))
+    has_coords = bool(result.get('緯度') and result.get('経度'))
+    
+    if has_phone and has_address and has_coords:
+        return 'Very High'
+    elif has_phone and has_address:
+        return 'High'
+    elif has_phone:
+        return 'Mid'
+    else:
+        return 'Low'
+
+def search_phone_from_organic(store_name, api_key):
+    """
+    Google organic検索から電話番号を取得する関数（フォールバック用）
     
     Args:
         store_name: 検索する店舗名（屋号）
+        api_key: SerpAPIキー
+    
+    Returns:
+        str: 電話番号（見つからない場合は空文字列）
+    """
+    try:
+        params = {
+            "engine": "google",
+            "q": f"{store_name} 公式 電話番号",
+            "api_key": api_key,
+            "num": 5
+        }
+        
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        
+        # organic_resultsから電話番号を抽出
+        for r in results.get("organic_results", []):
+            snippet = r.get("snippet", "")
+            # 日本の電話番号形式（XX-XXXX-XXXX等）を正規表現で抽出
+            match = re.search(r'\d{2,4}-\d{2,4}-\d{3,4}', snippet)
+            if match:
+                return match.group()
+        
+        return ""
+    except Exception as e:
+        return ""
+
+def search_store_by_name(store_name, location_str=None, api_key=None):
+    """
+    屋号（店名）から店舗情報を取得する関数（スコアリング・フォールバック対応）
+    
+    Args:
+        store_name: 検索する店舗名（屋号のみ）
         location_str: 検索場所（例: "@35.6762,139.6503,14z" または None）
         api_key: SerpAPIキー
     
     Returns:
-        dict: 店舗情報（店舗名、電話番号、住所、緯度、経度など）
+        dict: 店舗情報（店舗名、電話番号、住所、緯度、経度、信頼度など）
     """
     if not api_key:
-        return {'success': False, 'error': 'APIキーが設定されていません'}
+        return {
+            'success': False,
+            'error': 'APIキーが設定されていません',
+            '店舗名': '',
+            '電話番号': '',
+            '住所': '',
+            '緯度': None,
+            '経度': None,
+            '評価': '',
+            'レビュー数': '',
+            '信頼度': 'Low'
+        }
     
     try:
-        # 検索クエリを構築（屋号 + 地名の場合は地名も含める）
-        query = store_name
+        # qには屋号のみを使用（地名は含めない）
+        query = store_name.strip()
         
         # SerpAPIのパラメータを設定
         params = {
@@ -144,7 +243,7 @@ def search_store_by_name(store_name, location_str=None, api_key=None):
             "api_key": api_key
         }
         
-        # 場所が指定されている場合は追加
+        # 地名・座標はllにのみ使用
         if location_str:
             params["ll"] = location_str
         
@@ -156,12 +255,18 @@ def search_store_by_name(store_name, location_str=None, api_key=None):
         if results and 'local_results' in results:
             local_results = results.get('local_results', [])
             if local_results:
-                # 最初の結果（最も関連性の高い店舗）を取得
-                place = local_results[0]
+                # 複数ある場合はスコアリングで最適な店舗を選択
+                if len(local_results) > 1:
+                    scored_places = [(place, score_place(place)) for place in local_results]
+                    scored_places.sort(key=lambda x: x[1], reverse=True)
+                    place = scored_places[0][0]
+                else:
+                    place = local_results[0]
                 
                 # 店舗情報を抽出
                 title = place.get('title', '')
-                phone = place.get('phone') or place.get('電話', '')
+                # 電話番号のキー揺れを吸収
+                phone = place.get('phone') or place.get('formatted_phone_number') or place.get('電話', '')
                 address = place.get('address') or place.get('住所', '')
                 
                 # 座標を取得
@@ -169,7 +274,8 @@ def search_store_by_name(store_name, location_str=None, api_key=None):
                 latitude = gps.get('latitude') if gps else None
                 longitude = gps.get('longitude') if gps else None
                 
-                return {
+                # 結果を構築
+                result = {
                     'success': True,
                     '店舗名': title,
                     '電話番号': phone,
@@ -179,6 +285,28 @@ def search_store_by_name(store_name, location_str=None, api_key=None):
                     '評価': place.get('rating', ''),
                     'レビュー数': place.get('reviews', '')
                 }
+                
+                # 信頼度を計算
+                result['信頼度'] = calculate_confidence(result)
+                
+                return result
+        
+        # Google Mapsで電話番号が取得できなかった場合、Google organic検索にフォールバック
+        phone_from_organic = search_phone_from_organic(store_name, api_key)
+        
+        if phone_from_organic:
+            # organic検索で電話番号が見つかった場合
+            return {
+                'success': True,
+                '店舗名': store_name,
+                '電話番号': phone_from_organic,
+                '住所': '',
+                '緯度': None,
+                '経度': None,
+                '評価': '',
+                'レビュー数': '',
+                '信頼度': 'Mid'
+            }
         
         # 結果が見つからない場合
         return {
@@ -188,7 +316,10 @@ def search_store_by_name(store_name, location_str=None, api_key=None):
             '電話番号': '',
             '住所': '',
             '緯度': None,
-            '経度': None
+            '経度': None,
+            '評価': '',
+            'レビュー数': '',
+            '信頼度': 'Low'
         }
         
     except Exception as e:
@@ -199,7 +330,10 @@ def search_store_by_name(store_name, location_str=None, api_key=None):
             '電話番号': '',
             '住所': '',
             '緯度': None,
-            '経度': None
+            '経度': None,
+            '評価': '',
+            'レビュー数': '',
+            '信頼度': 'Low'
         }
 
 # タイトルと説明
@@ -553,265 +687,265 @@ if location_input_method == "地名から検索（推奨）":
         elif location_input_method == "地名から検索（推奨）" and 'found_address' not in st.session_state:
             st.warning("⚠️ 地名から座標を取得してください。")
         else:
-        # 取得件数の設定
-        max_results = 100
-        
-        # 中心座標
-        center_lat = st.session_state.lat
-        center_lon = st.session_state.lon
-        
-        filter_text = "（テイクアウト対応のみ）" if filter_takeout_only else ""
-        radius_text = f"（半径{radius_meters}m）" if use_radius and radius_meters else ""
-        expand_text = "（複数地点検索）" if expand_search else ""
-        with st.spinner(f"「{search_query}」を検索しています{filter_text}{radius_text}{expand_text}..."):
-            try:
-                # 電話番号を抽出してリスト化
-                phone_numbers = []
-                all_places = []  # 全店舗を一時保存
-                page = 0
-                max_pages = 6  # 最大6ページ（約120件）まで取得を試行
-                
-                # プログレスバー
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                # 検索地点のリスト
-                search_locations = []
-                if use_radius and radius_meters:
-                    # 半径指定の場合は、半径内をカバーするために複数の検索地点を生成
-                    search_locations = generate_search_points(center_lat, center_lon, radius_meters)
-                    status_text.text(f"半径{radius_meters}m内をカバーするために{len(search_locations)}地点から検索します...")
-                elif expand_search:
-                    # 中心地点の周辺から複数の地点を生成
-                    zoom_level = st.session_state.zoom
-                    
-                    # 周辺の地点を生成（緯度・経度を少しずつずらす）
-                    offsets = [
-                        (0, 0),  # 中心
-                        (0.01, 0),  # 北
-                        (-0.01, 0),  # 南
-                        (0, 0.01),  # 東
-                        (0, -0.01),  # 西
-                        (0.007, 0.007),  # 北東
-                        (-0.007, 0.007),  # 南東
-                        (0.007, -0.007),  # 北西
-                        (-0.007, -0.007),  # 南西
-                    ]
-                    
-                    for lat_offset, lon_offset in offsets:
-                        search_locations.append({
-                            'lat': center_lat + lat_offset,
-                            'lon': center_lon + lon_offset,
-                            'zoom': zoom_level
-                        })
-                else:
-                    # 単一地点検索
-                    search_locations.append({
-                        'lat': st.session_state.lat,
-                        'lon': st.session_state.lon,
-                        'zoom': st.session_state.zoom
-                    })
-                
-                # 各地点から検索
-                total_locations = len(search_locations)
-                for loc_idx, loc in enumerate(search_locations):
-                    location_str = f"@{loc['lat']},{loc['lon']},{loc['zoom']}z"
-                    
-                    if total_locations > 1:
-                        status_text.text(f"地点 {loc_idx + 1}/{total_locations} を検索中... ({len(all_places)}件取得済み)")
-                        progress_bar.progress(loc_idx / total_locations)
-                    
-                    # 最初のリクエスト
-                    params = {
-                        "engine": "google_maps",
-                        "q": search_query,
-                        "ll": location_str,
-                        "api_key": api_key
-                    }
-                    
-                    search = GoogleSearch(params)
-                    results = search.get_dict()
-                
-                    # 複数ページを取得（シンプルな実装）
+            # 取得件数の設定
+            max_results = 100
+            
+            # 中心座標
+            center_lat = st.session_state.lat
+            center_lon = st.session_state.lon
+            
+            filter_text = "（テイクアウト対応のみ）" if filter_takeout_only else ""
+            radius_text = f"（半径{radius_meters}m）" if use_radius and radius_meters else ""
+            expand_text = "（複数地点検索）" if expand_search else ""
+            with st.spinner(f"「{search_query}」を検索しています{filter_text}{radius_text}{expand_text}..."):
+                try:
+                    # 電話番号を抽出してリスト化
+                    phone_numbers = []
+                    all_places = []  # 全店舗を一時保存
                     page = 0
-                    while page < max_pages:
-                        page += 1
+                    max_pages = 6  # 最大6ページ（約120件）まで取得を試行
+                    
+                    # プログレスバー
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    # 検索地点のリスト
+                    search_locations = []
+                    if use_radius and radius_meters:
+                        # 半径指定の場合は、半径内をカバーするために複数の検索地点を生成
+                        search_locations = generate_search_points(center_lat, center_lon, radius_meters)
+                        status_text.text(f"半径{radius_meters}m内をカバーするために{len(search_locations)}地点から検索します...")
+                    elif expand_search:
+                        # 中心地点の周辺から複数の地点を生成
+                        zoom_level = st.session_state.zoom
+                        
+                        # 周辺の地点を生成（緯度・経度を少しずつずらす）
+                        offsets = [
+                            (0, 0),  # 中心
+                            (0.01, 0),  # 北
+                            (-0.01, 0),  # 南
+                            (0, 0.01),  # 東
+                            (0, -0.01),  # 西
+                            (0.007, 0.007),  # 北東
+                            (-0.007, 0.007),  # 南東
+                            (0.007, -0.007),  # 北西
+                            (-0.007, -0.007),  # 南西
+                        ]
+                        
+                        for lat_offset, lon_offset in offsets:
+                            search_locations.append({
+                                'lat': center_lat + lat_offset,
+                                'lon': center_lon + lon_offset,
+                                'zoom': zoom_level
+                            })
+                    else:
+                        # 単一地点検索
+                        search_locations.append({
+                            'lat': st.session_state.lat,
+                            'lon': st.session_state.lon,
+                            'zoom': st.session_state.zoom
+                        })
+                    
+                    # 各地点から検索
+                    total_locations = len(search_locations)
+                    for loc_idx, loc in enumerate(search_locations):
+                        location_str = f"@{loc['lat']},{loc['lon']},{loc['zoom']}z"
+                        
                         if total_locations > 1:
-                            status_text.text(f"地点 {loc_idx + 1}/{total_locations} - ページ {page} を取得中... ({len(all_places)}件取得済み)")
-                        else:
-                            status_text.text(f"ページ {page} を取得中... ({len(all_places)}件取得済み)")
-                        progress_bar.progress((loc_idx + page / max_pages) / total_locations)
+                            status_text.text(f"地点 {loc_idx + 1}/{total_locations} を検索中... ({len(all_places)}件取得済み)")
+                            progress_bar.progress(loc_idx / total_locations)
                         
-                        # 結果が取得できたか確認
-                        if not results or 'local_results' not in results:
+                        # 最初のリクエスト
+                        params = {
+                            "engine": "google_maps",
+                            "q": search_query,
+                            "ll": location_str,
+                            "api_key": api_key
+                        }
+                        
+                        search = GoogleSearch(params)
+                        results = search.get_dict()
+                    
+                        # 複数ページを取得（シンプルな実装）
+                        page = 0
+                        while page < max_pages:
+                            page += 1
+                            if total_locations > 1:
+                                status_text.text(f"地点 {loc_idx + 1}/{total_locations} - ページ {page} を取得中... ({len(all_places)}件取得済み)")
+                            else:
+                                status_text.text(f"ページ {page} を取得中... ({len(all_places)}件取得済み)")
+                            progress_bar.progress((loc_idx + page / max_pages) / total_locations)
+                            
+                            # 結果が取得できたか確認
+                            if not results or 'local_results' not in results:
+                                break
+                            
+                            page_results = results.get('local_results', [])
+                            
+                            # 結果が空の場合は終了
+                            if not page_results:
+                                break
+                            
+                            # 全店舗を一時保存（重複を避けるため、タイトルと住所でチェック）
+                            existing_places = {(p.get('title', ''), p.get('address', '')) for p in all_places}
+                            for place in page_results:
+                                place_key = (place.get('title', ''), place.get('address', ''))
+                                if place_key not in existing_places:
+                                    all_places.append(place)
+                                    existing_places.add(place_key)
+                            
+                            # 次のページを取得
+                            if len(page_results) < 20:  # 最後のページ
+                                break
+                            
+                            # 次のページを取得
+                            try:
+                                search = search.get_next()
+                                results = search.get_dict()
+                            except Exception as e:
+                                # get_next()が使えない場合は終了
+                                break
+                        
+                        # 十分な結果が取得できた場合は次の地点をスキップ
+                        if len(all_places) >= max_results * 2:  # フィルタリング後の余裕を持たせる
                             break
+                    
+                    # プログレスバーを完了
+                    progress_bar.progress(1.0)
+                    status_text.text("結果をフィルタリング中...")
+                    
+                    # 店舗をフィルタリング
+                    for place in all_places:
+                        # 半径フィルタが有効な場合、店舗の座標を取得して距離を計算
+                        if use_radius and radius_meters:
+                            # 店舗の座標を取得（SerpAPIの結果から）
+                            place_lat = None
+                            place_lon = None
+                            
+                            # gps_coordinates フィールドから座標を取得
+                            gps = place.get('gps_coordinates', {})
+                            if gps:
+                                place_lat = gps.get('latitude')
+                                place_lon = gps.get('longitude')
+                            
+                            # 座標が取得できない場合は、住所からジオコーディングを試みる
+                            if place_lat is None or place_lon is None:
+                                address = place.get('address') or place.get('住所', '')
+                                if address:
+                                    try:
+                                        geolocator = Nominatim(user_agent="phone_number_app")
+                                        location = geolocator.geocode(address, timeout=5)
+                                        if location:
+                                            place_lat = location.latitude
+                                            place_lon = location.longitude
+                                    except:
+                                        pass
+                            
+                            # 座標が取得できた場合、中心からの距離を計算
+                            if place_lat is not None and place_lon is not None:
+                                distance = calculate_distance(center_lat, center_lon, place_lat, place_lon)
+                                # 指定した半径を超えている場合はスキップ
+                                if distance > radius_meters:
+                                    continue
                         
-                        page_results = results.get('local_results', [])
+                        # テイクアウトフィルタが有効な場合
+                        if filter_takeout_only:
+                            service_options = place.get('service_options', {})
+                            takeout = service_options.get('takeout') or service_options.get('テイクアウト')
+                            if not takeout:
+                                continue  # テイクアウト対応でない場合はスキップ
                         
-                        # 結果が空の場合は終了
-                        if not page_results:
+                        if len(phone_numbers) >= max_results:
                             break
+                            
+                        title = place.get('title', 'タイトル不明')
+                        phone = place.get('phone') or place.get('電話', '電話番号なし')
+                        address = place.get('address') or place.get('住所', '住所不明')
+                        rating = place.get('rating', '評価なし')
+                        reviews = place.get('reviews', 'レビュー数なし')
                         
-                        # 全店舗を一時保存（重複を避けるため、タイトルと住所でチェック）
-                        existing_places = {(p.get('title', ''), p.get('address', '')) for p in all_places}
-                        for place in page_results:
-                            place_key = (place.get('title', ''), place.get('address', ''))
-                            if place_key not in existing_places:
-                                all_places.append(place)
-                                existing_places.add(place_key)
+                        # 距離情報を追加（半径指定の場合）
+                        distance_info = {}
+                        if use_radius and radius_meters:
+                            gps = place.get('gps_coordinates', {})
+                            if gps and gps.get('latitude') and gps.get('longitude'):
+                                distance = calculate_distance(center_lat, center_lon, gps['latitude'], gps['longitude'])
+                                distance_info['距離（m）'] = f"{distance:.0f}"
                         
-                        # 次のページを取得
-                        if len(page_results) < 20:  # 最後のページ
-                            break
+                        phone_numbers.append({
+                            '店舗名': title,
+                            '電話番号': phone,
+                            '住所': address,
+                            '評価': rating,
+                            'レビュー数': reviews,
+                            **distance_info
+                        })
+                    
+                    # プログレスバーを完了
+                    progress_bar.progress(1.0)
+                    status_text.empty()
+                    
+                    if phone_numbers:
+                        st.success(f"✅ {len(phone_numbers)}件の店舗が見つかりました！")
                         
-                        # 次のページを取得
-                        try:
-                            search = search.get_next()
-                            results = search.get_dict()
-                        except Exception as e:
-                            # get_next()が使えない場合は終了
-                            break
-                    
-                    # 十分な結果が取得できた場合は次の地点をスキップ
-                    if len(all_places) >= max_results * 2:  # フィルタリング後の余裕を持たせる
-                        break
-                
-                # プログレスバーを完了
-                progress_bar.progress(1.0)
-                status_text.text("結果をフィルタリング中...")
-                
-                # 店舗をフィルタリング
-                for place in all_places:
-                    # 半径フィルタが有効な場合、店舗の座標を取得して距離を計算
-                    if use_radius and radius_meters:
-                        # 店舗の座標を取得（SerpAPIの結果から）
-                        place_lat = None
-                        place_lon = None
+                        # データフレームに変換
+                        df = pd.DataFrame(phone_numbers)
                         
-                        # gps_coordinates フィールドから座標を取得
-                        gps = place.get('gps_coordinates', {})
-                        if gps:
-                            place_lat = gps.get('latitude')
-                            place_lon = gps.get('longitude')
+                        # タブで表示形式を切り替え
+                        tab1, tab2, tab3 = st.tabs(["📊 テーブル表示", "📋 リスト表示", "📥 CSVダウンロード"])
                         
-                        # 座標が取得できない場合は、住所からジオコーディングを試みる
-                        if place_lat is None or place_lon is None:
-                            address = place.get('address') or place.get('住所', '')
-                            if address:
-                                try:
-                                    geolocator = Nominatim(user_agent="phone_number_app")
-                                    location = geolocator.geocode(address, timeout=5)
-                                    if location:
-                                        place_lat = location.latitude
-                                        place_lon = location.longitude
-                                except:
-                                    pass
+                        with tab1:
+                            st.dataframe(
+                                df,
+                                use_container_width=True,
+                                hide_index=True
+                            )
                         
-                        # 座標が取得できた場合、中心からの距離を計算
-                        if place_lat is not None and place_lon is not None:
-                            distance = calculate_distance(center_lat, center_lon, place_lat, place_lon)
-                            # 指定した半径を超えている場合はスキップ
-                            if distance > radius_meters:
-                                continue
-                    
-                    # テイクアウトフィルタが有効な場合
-                    if filter_takeout_only:
-                        service_options = place.get('service_options', {})
-                        takeout = service_options.get('takeout') or service_options.get('テイクアウト')
-                        if not takeout:
-                            continue  # テイクアウト対応でない場合はスキップ
-                    
-                    if len(phone_numbers) >= max_results:
-                        break
+                        with tab2:
+                            for index, place in enumerate(phone_numbers, 1):
+                                with st.container():
+                                    col1, col2 = st.columns([3, 1])
+                                    with col1:
+                                        st.markdown(f"### {index}. {place['店舗名']}")
+                                        st.markdown(f"📞 **電話番号:** {place['電話番号']}")
+                                        st.markdown(f"📍 **住所:** {place['住所']}")
+                                        if place['評価'] != '評価なし':
+                                            st.markdown(f"⭐ **評価:** {place['評価']} ({place['レビュー数']}件)")
+                                    st.divider()
                         
-                    title = place.get('title', 'タイトル不明')
-                    phone = place.get('phone') or place.get('電話', '電話番号なし')
-                    address = place.get('address') or place.get('住所', '住所不明')
-                    rating = place.get('rating', '評価なし')
-                    reviews = place.get('reviews', 'レビュー数なし')
-                    
-                    # 距離情報を追加（半径指定の場合）
-                    distance_info = {}
-                    if use_radius and radius_meters:
-                        gps = place.get('gps_coordinates', {})
-                        if gps and gps.get('latitude') and gps.get('longitude'):
-                            distance = calculate_distance(center_lat, center_lon, gps['latitude'], gps['longitude'])
-                            distance_info['距離（m）'] = f"{distance:.0f}"
-                    
-                    phone_numbers.append({
-                        '店舗名': title,
-                        '電話番号': phone,
-                        '住所': address,
-                        '評価': rating,
-                        'レビュー数': reviews,
-                        **distance_info
-                    })
-                
-                # プログレスバーを完了
-                progress_bar.progress(1.0)
-                status_text.empty()
-                
-                if phone_numbers:
-                    st.success(f"✅ {len(phone_numbers)}件の店舗が見つかりました！")
-                    
-                    # データフレームに変換
-                    df = pd.DataFrame(phone_numbers)
-                    
-                    # タブで表示形式を切り替え
-                    tab1, tab2, tab3 = st.tabs(["📊 テーブル表示", "📋 リスト表示", "📥 CSVダウンロード"])
-                    
-                    with tab1:
-                        st.dataframe(
-                            df,
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                    
-                    with tab2:
-                        for index, place in enumerate(phone_numbers, 1):
-                            with st.container():
-                                col1, col2 = st.columns([3, 1])
-                                with col1:
-                                    st.markdown(f"### {index}. {place['店舗名']}")
-                                    st.markdown(f"📞 **電話番号:** {place['電話番号']}")
-                                    st.markdown(f"📍 **住所:** {place['住所']}")
-                                    if place['評価'] != '評価なし':
-                                        st.markdown(f"⭐ **評価:** {place['評価']} ({place['レビュー数']}件)")
-                                st.divider()
-                    
-                    with tab3:
-                        st.markdown("### CSVファイルをダウンロード")
-                        csv = df.to_csv(index=False, encoding='utf-8-sig')
-                        st.download_button(
-                            label="📥 CSVファイルをダウンロード",
-                            data=csv,
-                            file_name=f"phone_numbers_{search_query}_{len(phone_numbers)}件.csv",
-                            mime="text/csv",
-                            use_container_width=True
-                        )
+                        with tab3:
+                            st.markdown("### CSVファイルをダウンロード")
+                            csv = df.to_csv(index=False, encoding='utf-8-sig')
+                            st.download_button(
+                                label="📥 CSVファイルをダウンロード",
+                                data=csv,
+                                file_name=f"phone_numbers_{search_query}_{len(phone_numbers)}件.csv",
+                                mime="text/csv",
+                                use_container_width=True
+                            )
+                            
+                            # CSVのプレビュー
+                            st.markdown("#### プレビュー")
+                            st.dataframe(df, use_container_width=True, hide_index=True)
                         
-                        # CSVのプレビュー
-                        st.markdown("#### プレビュー")
-                        st.dataframe(df, use_container_width=True, hide_index=True)
+                        # 電話番号のみのリストをサイドバーに表示
+                        with st.sidebar:
+                            st.markdown("---")
+                            st.markdown(f"### 📞 電話番号リスト ({len(phone_numbers)}件)")
+                            for index, place in enumerate(phone_numbers[:20], 1):  # 最初の20件のみ表示
+                                if place['電話番号'] != '電話番号なし':
+                                    st.markdown(f"{index}. {place['電話番号']}")
+                            if len(phone_numbers) > 20:
+                                st.caption(f"他 {len(phone_numbers) - 20} 件...")
                     
-                    # 電話番号のみのリストをサイドバーに表示
-                    with st.sidebar:
-                        st.markdown("---")
-                        st.markdown(f"### 📞 電話番号リスト ({len(phone_numbers)}件)")
-                        for index, place in enumerate(phone_numbers[:20], 1):  # 最初の20件のみ表示
-                            if place['電話番号'] != '電話番号なし':
-                                st.markdown(f"{index}. {place['電話番号']}")
-                        if len(phone_numbers) > 20:
-                            st.caption(f"他 {len(phone_numbers) - 20} 件...")
-                
-                else:
-                    st.warning("⚠️ 電話番号が見つかりませんでした。")
-                    if results:
-                        st.json(results)  # デバッグ用に結果を表示
-                    
-            except Exception as e:
-                st.error(f"❌ エラーが発生しました: {str(e)}")
-                st.exception(e)
+                    else:
+                        st.warning("⚠️ 電話番号が見つかりませんでした。")
+                        if results:
+                            st.json(results)  # デバッグ用に結果を表示
+                            
+                except Exception as e:
+                    st.error(f"❌ エラーが発生しました: {str(e)}")
+                    st.exception(e)
 
 # CSVインポートタブ
 with tab_csv:
@@ -943,13 +1077,8 @@ with tab_csv:
                             status_text.text(f"検索中: {idx + 1}/{len(store_names)} - {store_name}")
                             progress_bar.progress((idx + 1) / len(store_names))
                             
-                            # 検索クエリを構築（地名がある場合は含める）
-                            query = store_name
-                            if location_name:
-                                query = f"{store_name} {location_name}"
-                            
-                            # 検索を実行
-                            result = search_store_by_name(query, location_str_csv, api_key)
+                            # 検索を実行（qには屋号のみ、地名・座標はllにのみ使用）
+                            result = search_store_by_name(store_name, location_str_csv, api_key)
                             
                             # 結果を保存
                             row_result = {
@@ -961,6 +1090,7 @@ with tab_csv:
                                 '経度': result.get('経度', ''),
                                 '評価': result.get('評価', ''),
                                 'レビュー数': result.get('レビュー数', ''),
+                                '信頼度': result.get('信頼度', 'Low'),
                                 'エラー': result.get('error', '') if not result.get('success', False) else ''
                             }
                             
@@ -1018,6 +1148,15 @@ with tab_csv:
                                             st.markdown(f"📍 **住所:** {row['住所']}")
                                         if row.get('距離（m）'):
                                             st.markdown(f"📏 **距離:** {row['距離（m）']}m")
+                                        # 信頼度を表示
+                                        confidence = row.get('信頼度', 'Low')
+                                        confidence_emoji = {
+                                            'Very High': '🟢',
+                                            'High': '🟡',
+                                            'Mid': '🟠',
+                                            'Low': '🔴'
+                                        }.get(confidence, '⚪')
+                                        st.markdown(f"{confidence_emoji} **信頼度:** {confidence}")
                                         if row['エラー']:
                                             st.warning(f"⚠️ {row['エラー']}")
                                         st.divider()
