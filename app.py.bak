@@ -466,215 +466,215 @@ if location_input_method == "地名から検索（推奨）":
     with st.form("search_form"):
         st.subheader("🔍 検索条件")
     
-        # 検索キーワード
-        search_query = st.text_input(
-            "検索キーワード *",
-            value="Coffee",
-            help="検索したい店舗のキーワードを入力してください（例: Coffee, ラーメン, 寿司）",
-            placeholder="例: Coffee"
-        )
-        
-        st.markdown("---")
-        
-        # 検索範囲の指定方法
-        range_method = st.radio(
-            "検索範囲の指定方法",
-            ["半径（メートル）で指定", "ズームレベルで指定"],
-            horizontal=True,
-            index=0 if st.session_state.get('use_radius', True) else 1,
-            help="半径を指定すると、指定した座標からその半径内の店舗を検索します"
-        )
-        
-        use_radius = (range_method == "半径（メートル）で指定")
-        st.session_state.use_radius = use_radius
-        
-        # 座標入力方法に応じた処理
-        if location_input_method == "地名から検索（推奨）":
-            if 'found_address' not in st.session_state:
-                st.info("ℹ️ 上記で地名を入力して「📍 座標を取得」ボタンをクリックしてください。")
-            
-            if use_radius:
-                # 半径指定
-                radius_meters = st.number_input(
-                    "検索半径（メートル）",
-                    min_value=100,
-                    max_value=50000,
-                    value=st.session_state.get('radius_meters', 1000),
-                    step=100,
-                    help="中心座標から指定した半径（メートル）内の店舗を検索します（例: 500m, 1000m, 5000m）"
-                )
-                st.session_state.radius_meters = radius_meters
-                
-                # 半径からズームレベルを計算
-                zoom = radius_to_zoom_level(radius_meters)
-                st.info(f"💡 **現在の設定**: 半径 {radius_meters}m - ズームレベル {zoom} で検索します")
-                st.session_state.zoom = zoom
-                location = f"@{st.session_state.lat},{st.session_state.lon},{zoom}z"
-            else:
-                # ズームレベルのプリセット
-                zoom_preset = st.selectbox(
-                    "検索範囲",
-                    ["狭い範囲（ズーム15-16）", "標準範囲（ズーム13-14）", "広範囲（ズーム11-12）", "非常に広範囲（ズーム9-10）", "カスタム"],
-                    index=1,
-                    help="範囲を広げるには、より小さいズームレベルを選択してください"
-                )
-                
-                if zoom_preset == "狭い範囲（ズーム15-16）":
-                    zoom = 15
-                elif zoom_preset == "標準範囲（ズーム13-14）":
-                    zoom = 14
-                elif zoom_preset == "広範囲（ズーム11-12）":
-                    zoom = 12
-                elif zoom_preset == "非常に広範囲（ズーム9-10）":
-                    zoom = 10
-                else:  # カスタム
-                    zoom = st.number_input(
-                        "ズームレベル（カスタム）",
-                        min_value=1,
-                        max_value=21,
-                        value=int(st.session_state.zoom),
-                        help="1-21の範囲。小さい値ほど広範囲で検索します（例: 10=広範囲、14=標準、16=狭範囲）"
-                    )
-                
-                st.info(f"💡 **現在の設定**: ズームレベル {zoom} - {'広範囲' if zoom <= 12 else '標準範囲' if zoom <= 14 else '狭範囲'}で検索します")
-                st.session_state.zoom = zoom
-                location = f"@{st.session_state.lat},{st.session_state.lon},{zoom}z"
-            
-        elif location_input_method == "座標を個別入力":
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                latitude = st.number_input(
-                    "緯度（Latitude）",
-                    value=float(st.session_state.lat),
-                    format="%.7f",
-                    help="例: 40.7455096（ニューヨーク）、35.6762（東京）"
-                )
-            
-            with col2:
-                longitude = st.number_input(
-                    "経度（Longitude）",
-                    value=float(st.session_state.lon),
-                    format="%.7f",
-                    help="例: -74.0083012（ニューヨーク）、139.6503（東京）"
-                )
-            
-            if use_radius:
-                # 半径指定
-                radius_meters = st.number_input(
-                    "検索半径（メートル）",
-                    min_value=100,
-                    max_value=50000,
-                    value=st.session_state.get('radius_meters', 1000),
-                    step=100,
-                    help="中心座標から指定した半径（メートル）内の店舗を検索します（例: 500m, 1000m, 5000m）"
-                )
-                st.session_state.radius_meters = radius_meters
-                
-                # 半径からズームレベルを計算
-                zoom = radius_to_zoom_level(radius_meters)
-                st.info(f"💡 **現在の設定**: 半径 {radius_meters}m - ズームレベル {zoom} で検索します")
-            else:
-                # ズームレベルのプリセット
-                zoom_preset = st.selectbox(
-                    "検索範囲",
-                    ["狭い範囲（ズーム15-16）", "標準範囲（ズーム13-14）", "広範囲（ズーム11-12）", "非常に広範囲（ズーム9-10）", "カスタム"],
-                    index=1,
-                    help="範囲を広げるには、より小さいズームレベルを選択してください"
-                )
-                
-                if zoom_preset == "狭い範囲（ズーム15-16）":
-                    zoom = 15
-                elif zoom_preset == "標準範囲（ズーム13-14）":
-                    zoom = 14
-                elif zoom_preset == "広範囲（ズーム11-12）":
-                    zoom = 12
-                elif zoom_preset == "非常に広範囲（ズーム9-10）":
-                    zoom = 10
-                else:  # カスタム
-                    zoom = st.number_input(
-                        "ズームレベル（カスタム）",
-                        min_value=1,
-                        max_value=21,
-                        value=int(st.session_state.zoom),
-                        help="1-21の範囲。小さい値ほど広範囲で検索します（例: 10=広範囲、14=標準、16=狭範囲）"
-                    )
-                
-                st.caption(f"💡 ズームレベル {zoom}")
-            
-            # セッションステートを更新
-            st.session_state.lat = latitude
-            st.session_state.lon = longitude
-            st.session_state.zoom = zoom
-            
-            # 一括入力形式に変換
-            location = f"@{latitude},{longitude},{zoom}z"
-            
-        else:  # 一括入力
-            location = st.text_input(
-                "場所（一括入力形式）",
-                value=f"@{st.session_state.lat},{st.session_state.lon},{st.session_state.zoom}z",
-                help="形式: @緯度,経度,ズームz（例: @40.7455096,-74.0083012,14z）",
-                placeholder="@40.7455096,-74.0083012,14z"
-            )
-            
-            # 一括入力形式から座標を抽出
-            try:
-                if location.startswith('@'):
-                    parts = location.replace('@', '').replace('z', '').split(',')
-                    if len(parts) >= 2:
-                        st.session_state.lat = float(parts[0])
-                        st.session_state.lon = float(parts[1])
-                        if len(parts) >= 3:
-                            st.session_state.zoom = int(float(parts[2]))
-            except:
-                pass
-            
-            if use_radius:
-                # 半径指定
-                radius_meters = st.number_input(
-                    "検索半径（メートル）",
-                    min_value=100,
-                    max_value=50000,
-                    value=st.session_state.get('radius_meters', 1000),
-                    step=100,
-                    help="中心座標から指定した半径（メートル）内の店舗を検索します（例: 500m, 1000m, 5000m）"
-                )
-                st.session_state.radius_meters = radius_meters
-                
-                # 半径からズームレベルを計算
-                zoom = radius_to_zoom_level(radius_meters)
-                st.info(f"💡 **現在の設定**: 半径 {radius_meters}m - ズームレベル {zoom} で検索します")
-                st.session_state.zoom = zoom
-        
-        st.markdown("---")
-        
-        # フィルタリングオプション
-        st.markdown("#### 🔍 検索オプション")
-        
-        col_filter1, col_filter2 = st.columns(2)
-        
-        with col_filter1:
-            filter_takeout_only = st.checkbox(
-                "📦 テイクアウト対応店舗のみ表示",
-                value=st.session_state.get('filter_takeout', False),
-                help="テイクアウトサービスを提供している店舗のみを表示します",
-                key="filter_takeout_checkbox"
-            )
-            st.session_state.filter_takeout = filter_takeout_only
-        
-        with col_filter2:
-            expand_search = st.checkbox(
-                "🌐 複数地点から検索（範囲拡大）",
-                value=st.session_state.get('expand_search', False),
-                help="中心地点の周辺から複数の地点で検索して、より多くの結果を取得します",
-                key="expand_search_checkbox"
-            )
-            st.session_state.expand_search = expand_search
-            
-            st.markdown("---")
-            search_button = st.form_submit_button("🔍 検索開始", use_container_width=True, type="primary")
+    # 検索キーワード
+    search_query = st.text_input(
+        "検索キーワード *",
+        value="Coffee",
+        help="検索したい店舗のキーワードを入力してください（例: Coffee, ラーメン, 寿司）",
+        placeholder="例: Coffee"
+    )
     
+    st.markdown("---")
+    
+    # 検索範囲の指定方法
+    range_method = st.radio(
+        "検索範囲の指定方法",
+        ["半径（メートル）で指定", "ズームレベルで指定"],
+        horizontal=True,
+        index=0 if st.session_state.get('use_radius', True) else 1,
+        help="半径を指定すると、指定した座標からその半径内の店舗を検索します"
+    )
+    
+    use_radius = (range_method == "半径（メートル）で指定")
+    st.session_state.use_radius = use_radius
+    
+    # 座標入力方法に応じた処理
+    if location_input_method == "地名から検索（推奨）":
+        if 'found_address' not in st.session_state:
+            st.info("ℹ️ 上記で地名を入力して「📍 座標を取得」ボタンをクリックしてください。")
+        
+        if use_radius:
+            # 半径指定
+            radius_meters = st.number_input(
+                "検索半径（メートル）",
+                min_value=100,
+                max_value=50000,
+                value=st.session_state.get('radius_meters', 1000),
+                step=100,
+                help="中心座標から指定した半径（メートル）内の店舗を検索します（例: 500m, 1000m, 5000m）"
+            )
+            st.session_state.radius_meters = radius_meters
+            
+            # 半径からズームレベルを計算
+            zoom = radius_to_zoom_level(radius_meters)
+            st.info(f"💡 **現在の設定**: 半径 {radius_meters}m - ズームレベル {zoom} で検索します")
+            st.session_state.zoom = zoom
+            location = f"@{st.session_state.lat},{st.session_state.lon},{zoom}z"
+        else:
+            # ズームレベルのプリセット
+            zoom_preset = st.selectbox(
+                "検索範囲",
+                ["狭い範囲（ズーム15-16）", "標準範囲（ズーム13-14）", "広範囲（ズーム11-12）", "非常に広範囲（ズーム9-10）", "カスタム"],
+                index=1,
+                help="範囲を広げるには、より小さいズームレベルを選択してください"
+            )
+            
+            if zoom_preset == "狭い範囲（ズーム15-16）":
+                zoom = 15
+            elif zoom_preset == "標準範囲（ズーム13-14）":
+                zoom = 14
+            elif zoom_preset == "広範囲（ズーム11-12）":
+                zoom = 12
+            elif zoom_preset == "非常に広範囲（ズーム9-10）":
+                zoom = 10
+            else:  # カスタム
+                zoom = st.number_input(
+                    "ズームレベル（カスタム）",
+                    min_value=1,
+                    max_value=21,
+                    value=int(st.session_state.zoom),
+                    help="1-21の範囲。小さい値ほど広範囲で検索します（例: 10=広範囲、14=標準、16=狭範囲）"
+                )
+            
+            st.info(f"💡 **現在の設定**: ズームレベル {zoom} - {'広範囲' if zoom <= 12 else '標準範囲' if zoom <= 14 else '狭範囲'}で検索します")
+            st.session_state.zoom = zoom
+            location = f"@{st.session_state.lat},{st.session_state.lon},{zoom}z"
+        
+    elif location_input_method == "座標を個別入力":
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            latitude = st.number_input(
+                "緯度（Latitude）",
+                value=float(st.session_state.lat),
+                format="%.7f",
+                help="例: 40.7455096（ニューヨーク）、35.6762（東京）"
+            )
+        
+        with col2:
+            longitude = st.number_input(
+                "経度（Longitude）",
+                value=float(st.session_state.lon),
+                format="%.7f",
+                help="例: -74.0083012（ニューヨーク）、139.6503（東京）"
+            )
+        
+        if use_radius:
+            # 半径指定
+            radius_meters = st.number_input(
+                "検索半径（メートル）",
+                min_value=100,
+                max_value=50000,
+                value=st.session_state.get('radius_meters', 1000),
+                step=100,
+                help="中心座標から指定した半径（メートル）内の店舗を検索します（例: 500m, 1000m, 5000m）"
+            )
+            st.session_state.radius_meters = radius_meters
+            
+            # 半径からズームレベルを計算
+            zoom = radius_to_zoom_level(radius_meters)
+            st.info(f"💡 **現在の設定**: 半径 {radius_meters}m - ズームレベル {zoom} で検索します")
+        else:
+            # ズームレベルのプリセット
+            zoom_preset = st.selectbox(
+                "検索範囲",
+                ["狭い範囲（ズーム15-16）", "標準範囲（ズーム13-14）", "広範囲（ズーム11-12）", "非常に広範囲（ズーム9-10）", "カスタム"],
+                index=1,
+                help="範囲を広げるには、より小さいズームレベルを選択してください"
+            )
+            
+            if zoom_preset == "狭い範囲（ズーム15-16）":
+                zoom = 15
+            elif zoom_preset == "標準範囲（ズーム13-14）":
+                zoom = 14
+            elif zoom_preset == "広範囲（ズーム11-12）":
+                zoom = 12
+            elif zoom_preset == "非常に広範囲（ズーム9-10）":
+                zoom = 10
+            else:  # カスタム
+                zoom = st.number_input(
+                    "ズームレベル（カスタム）",
+                    min_value=1,
+                    max_value=21,
+                    value=int(st.session_state.zoom),
+                    help="1-21の範囲。小さい値ほど広範囲で検索します（例: 10=広範囲、14=標準、16=狭範囲）"
+                )
+            
+            st.caption(f"💡 ズームレベル {zoom}")
+        
+        # セッションステートを更新
+        st.session_state.lat = latitude
+        st.session_state.lon = longitude
+        st.session_state.zoom = zoom
+        
+        # 一括入力形式に変換
+        location = f"@{latitude},{longitude},{zoom}z"
+        
+    else:  # 一括入力
+        location = st.text_input(
+            "場所（一括入力形式）",
+            value=f"@{st.session_state.lat},{st.session_state.lon},{st.session_state.zoom}z",
+            help="形式: @緯度,経度,ズームz（例: @40.7455096,-74.0083012,14z）",
+            placeholder="@40.7455096,-74.0083012,14z"
+        )
+        
+        # 一括入力形式から座標を抽出
+        try:
+            if location.startswith('@'):
+                parts = location.replace('@', '').replace('z', '').split(',')
+                if len(parts) >= 2:
+                    st.session_state.lat = float(parts[0])
+                    st.session_state.lon = float(parts[1])
+                    if len(parts) >= 3:
+                        st.session_state.zoom = int(float(parts[2]))
+        except:
+            pass
+        
+        if use_radius:
+            # 半径指定
+            radius_meters = st.number_input(
+                "検索半径（メートル）",
+                min_value=100,
+                max_value=50000,
+                value=st.session_state.get('radius_meters', 1000),
+                step=100,
+                help="中心座標から指定した半径（メートル）内の店舗を検索します（例: 500m, 1000m, 5000m）"
+            )
+            st.session_state.radius_meters = radius_meters
+            
+            # 半径からズームレベルを計算
+            zoom = radius_to_zoom_level(radius_meters)
+            st.info(f"💡 **現在の設定**: 半径 {radius_meters}m - ズームレベル {zoom} で検索します")
+            st.session_state.zoom = zoom
+    
+    st.markdown("---")
+    
+    # フィルタリングオプション
+    st.markdown("#### 🔍 検索オプション")
+    
+    col_filter1, col_filter2 = st.columns(2)
+    
+    with col_filter1:
+        filter_takeout_only = st.checkbox(
+            "📦 テイクアウト対応店舗のみ表示",
+            value=st.session_state.get('filter_takeout', False),
+            help="テイクアウトサービスを提供している店舗のみを表示します",
+            key="filter_takeout_checkbox"
+        )
+        st.session_state.filter_takeout = filter_takeout_only
+    
+    with col_filter2:
+        expand_search = st.checkbox(
+            "🌐 複数地点から検索（範囲拡大）",
+            value=st.session_state.get('expand_search', False),
+            help="中心地点の周辺から複数の地点で検索して、より多くの結果を取得します",
+            key="expand_search_checkbox"
+        )
+        st.session_state.expand_search = expand_search
+        
+        st.markdown("---")
+        search_button = st.form_submit_button("🔍 検索開始", use_container_width=True, type="primary")
+
     # 検索実行
     if search_button:
         filter_takeout_only = st.session_state.get('filter_takeout', False)
