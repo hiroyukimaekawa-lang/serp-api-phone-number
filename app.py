@@ -672,8 +672,8 @@ if location_input_method == "地名から検索（推奨）":
             )
             st.session_state.expand_search = expand_search
             
-            st.markdown("---")
-            search_button = st.form_submit_button("🔍 検索開始", use_container_width=True, type="primary")
+        st.markdown("---")
+        search_button = st.form_submit_button("🔍 検索開始", use_container_width=True, type="primary")
     
     # 検索実行
     if search_button:
