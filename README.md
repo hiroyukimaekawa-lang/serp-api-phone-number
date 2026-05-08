@@ -72,3 +72,4 @@ python phone_number_extractor.py "Coffee" "@40.7455096,-74.0083012,14z" --csv
 - `--csv`オプションでCSV形式でも出力可能です（コマンドライン版）
 - Streamlitアプリでは、タブからCSVダウンロードが可能です
 
+# csv-scrape
